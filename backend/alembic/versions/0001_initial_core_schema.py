@@ -234,9 +234,15 @@ def upgrade() -> None:
         postgresql_where=sa.text("eori_number IS NOT NULL"),
     )
     # HNSW ANN index for semantic dedup (cosine). Requires pgvector >= 0.5.
-    op.execute(
-        "CREATE INDEX ix_companies_embedding_hnsw ON companies "
-        "USING hnsw (embedding vector_cosine_ops)"
+    # Mirrors the Index(...) on the Company model exactly — kept as
+    # op.create_index (not raw SQL) so it matches what autogenerate expects
+    # and doesn't get flagged as drift.
+    op.create_index(
+        "ix_companies_embedding_hnsw",
+        "companies",
+        ["embedding"],
+        postgresql_using="hnsw",
+        postgresql_ops={"embedding": "vector_cosine_ops"},
     )
 
     # --- trade_signals --------------------------------------------------------

@@ -137,6 +137,15 @@ class Company(Base, TenantMixin, TimestampMixin):
         ),
         Index("ix_companies_tenant_match_key", "tenant_id", "match_key"),
         Index("ix_companies_tenant_country", "tenant_id", "country"),
+        # HNSW ANN index for semantic dedup (cosine). Registered on the model
+        # (not just raw SQL in the migration) so autogenerate sees it and
+        # doesn't propose dropping it as an "extra" index on every diff.
+        Index(
+            "ix_companies_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
         # Partial uniqueness: a registry ID, when present, is unique per tenant.
         Index(
             "uq_companies_tenant_duns",
