@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     clerk_secret_key: str | None = None
     clerk_publishable_key: str | None = None
+    # Session-token verification (core.auth.clerk) uses the JWKS endpoint and
+    # issuer, not the secret key above — the secret key is for calling
+    # Clerk's own API, a different credential for a different purpose.
+    clerk_jwks_url: str | None = None
+    clerk_issuer: str | None = None
 
     # OpenSanctions self-hosted (yente) or hosted match API. Unset in dev —
     # the sanctions provider raises a clear error if called without one

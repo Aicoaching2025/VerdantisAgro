@@ -266,6 +266,12 @@ class Lead(Base, TenantMixin, TimestampMixin):
     )
     fit_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # LangGraph checkpointer thread_id for the outbound run that owns this
+    # lead — lets the approvals endpoint look up the live interrupt() state
+    # for a PENDING_APPROVAL lead. Inbound leads never set this (their graph
+    # never interrupts).
+    thread_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     routed_to: Mapped[RoutingTarget | None] = mapped_column(
         SAEnum(RoutingTarget, name="routing_target", create_type=False),
         nullable=True,

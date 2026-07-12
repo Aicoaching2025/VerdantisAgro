@@ -110,6 +110,9 @@ async def next_company(state: OutboundState, config: RunnableConfig) -> dict[str
         tenant_id=state.tenant_id,
         company_id=company_id,
         source=LeadSource.OUTBOUND_DISCOVERY,
+        # Lets the approvals API look up this lead's live interrupt() state
+        # from the checkpointer once it reaches PENDING_APPROVAL.
+        thread_id=config.get("configurable", {}).get("thread_id"),
     )
     services.session.add(lead)
     await services.session.commit()
