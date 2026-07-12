@@ -22,6 +22,8 @@ dependencies = [
     "langgraph-checkpoint-postgres>=2.0",
     "psycopg[binary,pool]>=3.1",
     "anthropic>=0.40",
+    "pyjwt[crypto]>=2.9",
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]

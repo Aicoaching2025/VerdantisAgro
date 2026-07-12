@@ -17,6 +17,14 @@ from verdantis.db.enums import RoutingTarget
 class TenantConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    # Outbound discovery scope (agents.outbound). Closes a gap carried since
+    # Phase 2, where fit_threshold was a hardcoded OutboundState default
+    # rather than tenant-scoped — the outbound run-trigger endpoint (Phase
+    # 4) is the first real caller, and it reads these instead.
+    commodities: list[str] = Field(default_factory=list)
+    regions: list[str] | None = None
+    outbound_fit_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+
     inbound_fit_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     default_routing_target: RoutingTarget = RoutingTarget.SALES
     slack_webhook_url: str | None = None
