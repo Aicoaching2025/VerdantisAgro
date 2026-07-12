@@ -41,7 +41,7 @@ async def score_fit(client: LLMClient, dossier: CompanyDossier) -> FitScoreResul
     raw = await client.complete(
         system=_SYSTEM_PROMPT, user=_build_prompt(dossier), max_tokens=512
     )
-    return _parse_response(raw)
+    return parse_score_response(raw)
 
 
 def _build_prompt(dossier: CompanyDossier) -> str:
@@ -66,7 +66,9 @@ def _build_prompt(dossier: CompanyDossier) -> str:
     return json.dumps(payload)
 
 
-def _parse_response(raw: str) -> FitScoreResult:
+def parse_score_response(raw: str) -> FitScoreResult:
+    """Shared {"score", "reasons"} JSON parser — used by both fit scoring
+    (outbound) and lead scoring (inbound), which return the same shape."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:

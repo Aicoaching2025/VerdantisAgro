@@ -55,6 +55,12 @@ class Settings(BaseSettings):
 
     hubspot_access_token: str | None = None
 
+    # Transactional ack email to inbound-form submitters (core.notify.email).
+    # The Slack webhook URL and "from" address are per-tenant routing config
+    # (Tenant.config / TenantConfig), not here — only Verdantis's own shared
+    # provider credential belongs in global settings.
+    resend_api_key: str | None = None
+
     @property
     def sync_database_url(self) -> str:
         """Sync driver (psycopg2) variant, for Alembic only.
