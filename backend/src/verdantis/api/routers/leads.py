@@ -21,6 +21,11 @@ from verdantis.api.schemas.leads import (
     LeadSummary,
 )
 from verdantis.core.dossier.service import CompanyNotFoundError, get_dossier
+from verdantis.core.security.encryption import (
+    DecryptionError,
+    EncryptionNotConfiguredError,
+)
+from verdantis.core.security.pii import decrypt_intake_pii
 from verdantis.db.enums import LeadSource, LeadStatus
 from verdantis.db.models import Lead, Tenant
 
@@ -99,10 +104,20 @@ async def get_lead(
         except CompanyNotFoundError:
             dossier = None
 
+    intake = lead.intake
+    if intake is not None:
+        try:
+            intake = decrypt_intake_pii(intake)
+        except (DecryptionError, EncryptionNotConfiguredError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="service temporarily unavailable",
+            ) from exc
+
     return LeadDetailResponse(
         lead=LeadSummary.model_validate(lead),
         incoterm=lead.incoterm,
         payment_terms=lead.payment_terms,
-        intake=lead.intake,
+        intake=intake,
         dossier=dossier,
     )

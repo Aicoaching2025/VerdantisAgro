@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from verdantis.api.deps import get_current_user, get_db
 from verdantis.api.main import app
 from verdantis.core.auth.clerk import ClerkUser
+from verdantis.core.security.pii import encrypt_intake_pii
 from verdantis.db.enums import LeadSource, LeadStatus
 from verdantis.db.models import Company, Lead, Tenant
 
@@ -141,7 +142,11 @@ async def test_get_lead_includes_dossier(
         source=LeadSource.INBOUND_FORM,
         status=LeadStatus.NEW,
         requested_commodity="cocoa",
-        intake={"contact_email": "jane@example.com"},
+        # Encrypted, matching what ingest_submission actually writes -> the
+        # API must decrypt on read, not just pass the column through.
+        intake=encrypt_intake_pii(
+            {"contact_name": "Jane Buyer", "contact_email": "jane@example.com"}
+        ),
     )
     db_session.add(lead)
     await db_session.commit()
@@ -153,6 +158,7 @@ async def test_get_lead_includes_dossier(
     body = response.json()
     assert body["lead"]["id"] == str(lead.id)
     assert body["intake"]["contact_email"] == "jane@example.com"
+    assert body["intake"]["contact_name"] == "Jane Buyer"
     assert body["dossier"]["legal_name"] == "Acme Trading Ltd"
 
 

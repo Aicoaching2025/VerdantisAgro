@@ -20,6 +20,7 @@ from verdantis.agents.inbound.graph import build_inbound_graph
 from verdantis.agents.inbound.nodes import ingest_submission
 from verdantis.agents.inbound.services import InboundServices
 from verdantis.agents.inbound.state import InboundState
+from verdantis.core.compliance.suppression import add_to_suppression_list
 from verdantis.core.crm.hubspot import HubSpotSyncResult
 from verdantis.core.notify.email import EmailSendResult
 from verdantis.core.verification.base import (
@@ -176,8 +177,6 @@ async def _ingest(session: AsyncSession, tenant: Tenant) -> InboundState:
         lead_id=lead_id,
         legal_name="Acme Trading Ltd",
         country="DE",
-        contact_name="Jane Buyer",
-        contact_email="jane@example.com",
         requested_commodity="cocoa",
         requested_volume="1 container",
         incoterm_raw="FOB",
@@ -304,3 +303,46 @@ async def test_no_interrupt_ever_raised_by_inbound_graph(
     result = await app.ainvoke(state, config=config)
 
     assert "__interrupt__" not in result
+
+
+async def test_suppressed_contact_still_dispatches_but_skips_the_ack_email(
+    db_session: AsyncSession,
+) -> None:
+    """Scope doc Section 8: "Maintain a suppression list checked before any
+    send." The suppression list gates the external email specifically —
+    CRM sync, Slack notification, and routing all still happen normally."""
+    tenant = await _make_tenant(db_session)
+    await add_to_suppression_list(
+        db_session,
+        tenant_id=tenant.id,
+        email="jane@example.com",
+        added_by="user_admin",
+        reason="unsubscribed",
+    )
+    await db_session.commit()
+
+    state = await _ingest(db_session, tenant)
+    crm, slack, email = _FakeCrmClient(), _FakeSlackNotifier(), _FakeEmailSender()
+    services = _build_services(
+        db_session,
+        sanctions_verdict=Verdict.PASS,
+        crm=crm,
+        slack=slack,
+        email=email,
+        fit_score=0.9,
+    )
+    app = build_inbound_graph().compile(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": str(uuid.uuid4()), "services": services}}
+
+    result = await app.ainvoke(state, config=config)
+
+    assert result["outcome"] == "dispatched"
+    assert len(crm.upsert_company_calls) == 1
+    assert len(crm.upsert_contact_calls) == 1
+    assert len(slack.calls) == 1
+    assert email.calls == []  # the only thing suppression blocks
+
+    lead = await db_session.get(Lead, state.lead_id)
+    assert lead is not None
+    assert lead.status is LeadStatus.ROUTED
+    assert lead.routed_to is RoutingTarget.SALES

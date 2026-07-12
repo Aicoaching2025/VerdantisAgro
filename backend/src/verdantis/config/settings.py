@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     # provider credential belongs in global settings.
     resend_api_key: str | None = None
 
+    # Field-level PII encryption at rest (core.security.encryption) for
+    # inbound-lead contact name/email. A Fernet key — generate one with
+    # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+    # and store it in Doppler, never in code. Unset here on purpose: encrypting
+    # PII without a real configured key must fail loudly, not silently no-op.
+    pii_encryption_key: str | None = None
+
     @property
     def sync_database_url(self) -> str:
         """Sync driver (psycopg2) variant, for Alembic only.
