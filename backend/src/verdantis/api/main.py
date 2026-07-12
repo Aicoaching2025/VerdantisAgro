@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from verdantis.api.routers import health
+from verdantis.api.routers import health, inbound
 from verdantis.observability import configure_observability, set_correlation_id
 
 
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Verdantis Buy-Side Lead-Gen API", lifespan=lifespan)
     app.add_middleware(CorrelationIdMiddleware)
     app.include_router(health.router)
+    app.include_router(inbound.router)
     return app
 
 
