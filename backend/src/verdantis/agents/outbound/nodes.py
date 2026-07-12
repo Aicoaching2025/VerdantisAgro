@@ -18,18 +18,21 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from verdantis.agents.outbound.services import get_services
 from verdantis.agents.outbound.state import Outcome, OutboundState
+from verdantis.agents.shared.entity_resolution import (
+    normalize_match_key,
+    resolve_or_create_company,
+)
 from verdantis.core.dossier.service import get_dossier
 from verdantis.core.outreach.draft import draft_outreach
 from verdantis.core.scoring.fit import FitScoreParseError, score_fit
 from verdantis.db.enums import LeadSource, LeadStatus
-from verdantis.db.models import Company, Lead
+from verdantis.db.models import Lead
 from verdantis.db.provenance import record_trade_signal
 
 
@@ -49,10 +52,10 @@ async def persist_signals(
     seen_keys: dict[str, uuid.UUID] = {}
 
     for record in state.fetched_signals:
-        match_key = _normalize_match_key(record.company_legal_name)
+        match_key = normalize_match_key(record.company_legal_name)
         company_id = seen_keys.get(match_key)
         if company_id is None:
-            company_id = await _resolve_or_create_company(
+            company_id = await resolve_or_create_company(
                 services.session,
                 tenant_id=state.tenant_id,
                 legal_name=record.company_legal_name,
@@ -79,36 +82,6 @@ async def persist_signals(
 
     await services.session.commit()
     return {"fetched_signals": [], "pending_company_ids": company_ids}
-
-
-def _normalize_match_key(legal_name: str) -> str:
-    return " ".join(legal_name.strip().lower().split())
-
-
-async def _resolve_or_create_company(
-    session: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    legal_name: str,
-    country: str | None,
-    match_key: str,
-) -> uuid.UUID:
-    existing = (
-        await session.execute(
-            select(Company).where(
-                Company.tenant_id == tenant_id, Company.match_key == match_key
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing.id
-
-    company = Company(
-        tenant_id=tenant_id, legal_name=legal_name, country=country, match_key=match_key
-    )
-    session.add(company)
-    await session.flush()
-    return company.id
 
 
 # Deliberately excludes current_lead_id: next_company always sets that

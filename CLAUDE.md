@@ -6,8 +6,19 @@ feature. This file is the **how**.
 
 ## Non-negotiable rules (these are code rules, not guidelines)
 
-1. **No autonomous outbound sends.** Every outbound message passes through a LangGraph
-   `interrupt()` human-approval node. No code path sends without an approved decision.
+1. **No autonomous outbound sends.** Every unsolicited outbound message — cold outreach the
+   outbound discovery graph originates, any LLM-drafted sales/marketing copy — passes through a
+   LangGraph `interrupt()` human-approval node. No code path sends anything of that kind without
+   an approved decision.
+   *Scoped exception:* the inbound graph's transactional acknowledgment to someone who submitted
+   Verdantis's own intake form, plus the internal-only routing that submission triggers (CRM
+   sync, Slack ping to the sales team), are not gated by `interrupt()`. The submitter initiated
+   contact, and the ack is a fixed, non-marketing "we received your inquiry" message — never
+   LLM-drafted, never carrying sales copy. A submission scored low-confidence still skips
+   auto-dispatch and routes to a human triage lane instead. A sanctions hit skips the ack
+   entirely (rule 4) — discard means nothing further happens, including no confirmation email.
+   If the inbound ack ever becomes templated/LLM-generated or grows marketing content, it
+   re-enters the `interrupt()` gate — this exception is for a fixed receipt notice only.
 2. **No raw licensed records persisted — ever.** Customs/BoL data
    (ImportYeti/Panjiva/ImportGenius/Tendata) is licensed. Persist derived signals only
    (counts, bands, recency, scores). This applies to test fixtures too — fixtures are
