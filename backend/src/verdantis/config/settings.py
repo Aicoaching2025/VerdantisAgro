@@ -47,6 +47,14 @@ class Settings(BaseSettings):
 
     opencorporates_api_key: str | None = None
 
+    # Model-routed per CLAUDE.md: cheap model for classification (fit
+    # scoring), stronger model for drafting.
+    anthropic_api_key: str | None = None
+    anthropic_scoring_model: str = "claude-haiku-4-5-20251001"
+    anthropic_drafting_model: str = "claude-sonnet-5"
+
+    hubspot_access_token: str | None = None
+
     @property
     def sync_database_url(self) -> str:
         """Sync driver (psycopg2) variant, for Alembic only.
@@ -55,6 +63,15 @@ class Settings(BaseSettings):
         (asyncpg). Same database, same credentials — only the driver differs.
         """
         return self.database_url.replace("+asyncpg", "+psycopg2")
+
+    @property
+    def psycopg_database_url(self) -> str:
+        """psycopg3 conninfo variant, for the LangGraph Postgres checkpointer.
+
+        AsyncPostgresSaver uses psycopg3, not asyncpg or psycopg2 — a third
+        driver for the same database, same credentials.
+        """
+        return self.database_url.replace("+asyncpg", "")
 
 
 @lru_cache
