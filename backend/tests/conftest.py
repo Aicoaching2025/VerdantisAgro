@@ -23,6 +23,7 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -33,6 +34,8 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://postgres:postgres@localhost:5432/verdantis_test",
 )
 TEST_DATABASE_URL_SYNC = TEST_DATABASE_URL.replace("+asyncpg", "+psycopg2")
+
+TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 
 _TABLES = "tenants, companies, trade_signals, verification_results, leads"
 
@@ -65,3 +68,14 @@ async def db_session(_migrated_db: None) -> AsyncIterator[AsyncSession]:
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE"))
     await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def redis_client() -> AsyncIterator[Redis]:
+    """A Redis client against an isolated logical DB (15), flushed after use."""
+    client = Redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    try:
+        yield client
+    finally:
+        await client.flushdb()
+        await client.aclose()

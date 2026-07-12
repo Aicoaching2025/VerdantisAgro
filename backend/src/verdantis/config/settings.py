@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     clerk_secret_key: str | None = None
     clerk_publishable_key: str | None = None
 
+    # OpenSanctions self-hosted (yente) or hosted match API. Unset in dev —
+    # the sanctions provider raises a clear error if called without one
+    # rather than silently no-op'ing past a compliance-critical check.
+    opensanctions_api_url: str = "https://api.opensanctions.org"
+    opensanctions_api_key: str | None = None
+
+    opencorporates_api_key: str | None = None
+
     @property
     def sync_database_url(self) -> str:
         """Sync driver (psycopg2) variant, for Alembic only.
