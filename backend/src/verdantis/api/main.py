@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from verdantis.api.deps import get_current_user
-from verdantis.api.routers import admin, health, inbound, leads, outbound
+from verdantis.api.routers import admin, health, inbound, leads, outbound, suppression
 from verdantis.observability import configure_observability, set_correlation_id
 
 
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(outbound.router, dependencies=auth_dep)
     app.include_router(leads.router, dependencies=auth_dep)
     app.include_router(admin.router, dependencies=auth_dep)
+    app.include_router(suppression.router, dependencies=auth_dep)
     return app
 
 

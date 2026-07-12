@@ -29,6 +29,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
@@ -300,4 +301,27 @@ class Lead(Base, TenantMixin, TimestampMixin):
         ),
         Index("ix_leads_tenant_status", "tenant_id", "status"),
         Index("ix_leads_company", "company_id"),
+    )
+
+
+class SuppressionEntry(Base, TenantMixin, TimestampMixin):
+    """A do-not-contact entry, checked before any send (scope doc Section 8:
+    "Maintain a suppression list checked before any send"). Looked up by a
+    deterministic hash so an exact-match query never requires decrypting
+    every row; the encrypted value is kept alongside for admin display only
+    — never store or compare the plaintext email directly.
+    """
+
+    __tablename__ = "suppression_entries"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    email_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    email_encrypted: Mapped[str] = mapped_column(String(512), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    added_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "email_hash", name="uq_suppression_tenant_email_hash"
+        ),
     )

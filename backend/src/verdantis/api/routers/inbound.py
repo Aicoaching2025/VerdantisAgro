@@ -32,6 +32,7 @@ from verdantis.api.schemas.inbound import (
     InboundSubmissionRequest,
     InboundSubmissionResponse,
 )
+from verdantis.core.security.encryption import EncryptionNotConfiguredError
 from verdantis.db.models import Tenant
 from verdantis.db.redis import get_redis, get_redis_client
 from verdantis.db.session import session_scope
@@ -74,29 +75,40 @@ async def submit_inbound_lead(
             status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found"
         )
 
-    company_id, lead_id = await ingest_submission(
-        session,
-        tenant_id=tenant.id,
-        legal_name=payload.legal_name,
-        country=payload.country,
-        contact_name=payload.contact_name,
-        contact_email=payload.contact_email,
-        requested_commodity=payload.requested_commodity,
-        requested_volume=payload.requested_volume,
-        incoterm_raw=payload.incoterm,
-        payment_terms_raw=payload.payment_terms,
-        message=payload.message,
-    )
+    try:
+        company_id, lead_id = await ingest_submission(
+            session,
+            tenant_id=tenant.id,
+            legal_name=payload.legal_name,
+            country=payload.country,
+            contact_name=payload.contact_name,
+            contact_email=payload.contact_email,
+            requested_commodity=payload.requested_commodity,
+            requested_volume=payload.requested_volume,
+            incoterm_raw=payload.incoterm,
+            payment_terms_raw=payload.payment_terms,
+            message=payload.message,
+        )
+    except EncryptionNotConfiguredError as exc:
+        # PII encryption is mandatory, not best-effort — fail the request
+        # rather than silently persist an unencrypted contact name/email.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="service temporarily unavailable",
+        ) from exc
 
     tenant_config = TenantConfig.from_raw(tenant.config)
+    # contact_name/contact_email deliberately do not flow into InboundState —
+    # see agents/inbound/state.py's docstring: the checkpointer durably
+    # persists this state, so PII carried here would leak in plaintext
+    # regardless of Lead.intake being encrypted. Nodes that need the
+    # contact decrypt it on demand from the Lead row instead.
     state = InboundState(
         tenant_id=tenant.id,
         company_id=company_id,
         lead_id=lead_id,
         legal_name=payload.legal_name,
         country=payload.country,
-        contact_name=payload.contact_name,
-        contact_email=payload.contact_email,
         requested_commodity=payload.requested_commodity,
         requested_volume=payload.requested_volume,
         incoterm_raw=payload.incoterm,

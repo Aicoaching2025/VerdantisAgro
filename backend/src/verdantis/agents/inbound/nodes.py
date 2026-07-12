@@ -28,11 +28,13 @@ from verdantis.agents.shared.entity_resolution import (
     normalize_match_key,
     resolve_or_create_company,
 )
+from verdantis.core.compliance.suppression import is_suppressed
 from verdantis.core.dossier.service import get_dossier
 from verdantis.core.intake.normalize import normalize_incoterm, normalize_payment_terms
 from verdantis.core.notify.email import render_inquiry_ack
 from verdantis.core.scoring.fit import FitScoreParseError
 from verdantis.core.scoring.lead import score_lead
+from verdantis.core.security.pii import decrypt_intake_pii, encrypt_intake_pii
 from verdantis.db.enums import LeadSource, LeadStatus, PaymentTerms, RoutingTarget
 from verdantis.db.models import Lead
 
@@ -65,14 +67,21 @@ async def ingest_submission(
         company_id=company_id,
         source=LeadSource.INBOUND_FORM,
         requested_commodity=requested_commodity,
-        intake={
-            "contact_name": contact_name,
-            "contact_email": contact_email,
-            "requested_volume": requested_volume,
-            "incoterm_raw": incoterm_raw,
-            "payment_terms_raw": payment_terms_raw,
-            "message": message,
-        },
+        # contact_name/contact_email are PII -> encrypted before they ever
+        # touch the database (core.security.pii). Raises
+        # EncryptionNotConfiguredError if no key is set; the caller (the API
+        # router) must fail the request rather than let that propagate into
+        # a silent plaintext write.
+        intake=encrypt_intake_pii(
+            {
+                "contact_name": contact_name,
+                "contact_email": contact_email,
+                "requested_volume": requested_volume,
+                "incoterm_raw": incoterm_raw,
+                "payment_terms_raw": payment_terms_raw,
+                "message": message,
+            }
+        ),
     )
     session.add(lead)
     await session.commit()
@@ -146,13 +155,16 @@ async def dispatch_node(state: InboundState, config: RunnableConfig) -> dict[str
                 "verdantis_fit_score": str(state.fit_score or ""),
             },
         )
-        await services.crm_client.upsert_contact(
-            email=state.contact_email,
-            properties={
-                "company": dossier.legal_name,
-                "requested_commodity": state.requested_commodity,
-            },
-        )
+        contact = await _load_decrypted_contact(services.session, state.lead_id)
+        if contact is not None:
+            _, contact_email = contact
+            await services.crm_client.upsert_contact(
+                email=contact_email,
+                properties={
+                    "company": dossier.legal_name,
+                    "requested_commodity": state.requested_commodity,
+                },
+            )
 
     if services.slack_notifier is not None:
         await services.slack_notifier.notify_new_lead(
@@ -192,16 +204,44 @@ async def _send_ack(state: InboundState, services: InboundServices) -> None:
     from_email = services.tenant_config.ack_from_email
     if not from_email:
         return  # no configured from-address -> skip rather than guess one
+
+    contact = await _load_decrypted_contact(services.session, state.lead_id)
+    if contact is None:
+        return
+    contact_name, contact_email = contact
+
+    if await is_suppressed(
+        services.session, tenant_id=state.tenant_id, email=contact_email
+    ):
+        # Do-not-contact -> skip only the send. Routing/CRM/Slack already
+        # happened (or will, for the triage path); the suppression list
+        # gates the external message, not the internal record-keeping.
+        return
+
     subject, body = render_inquiry_ack(
-        contact_name=state.contact_name, legal_name=state.legal_name
+        contact_name=contact_name, legal_name=state.legal_name
     )
     await services.email_sender.send(
-        to=state.contact_email,
+        to=contact_email,
         from_email=from_email,
         from_name=services.tenant_config.ack_from_name,
         subject=subject,
         body=body,
     )
+
+
+async def _load_decrypted_contact(
+    session: AsyncSession, lead_id: uuid.UUID
+) -> tuple[str, str] | None:
+    lead = await session.get(Lead, lead_id)
+    if lead is None or lead.intake is None:
+        return None
+    decrypted = decrypt_intake_pii(lead.intake)
+    contact_name = decrypted.get("contact_name")
+    contact_email = decrypted.get("contact_email")
+    if not contact_name or not contact_email:
+        return None
+    return contact_name, contact_email
 
 
 async def _route_lead(

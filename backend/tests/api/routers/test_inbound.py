@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import verdantis.api.routers.inbound as inbound_router
 from verdantis.api.deps import get_db
 from verdantis.api.main import app
+from verdantis.core.security.pii import decrypt_intake_pii
 from verdantis.db.enums import LeadSource
 from verdantis.db.models import Lead, Tenant
 from verdantis.db.redis import get_redis
@@ -106,7 +107,9 @@ async def test_valid_submission_returns_202_and_persists_lead(
     assert lead.source is LeadSource.INBOUND_FORM
     assert lead.requested_commodity == "cocoa"
     assert lead.intake is not None
-    assert lead.intake["contact_email"] == "jane@example.com"
+    # PII is encrypted at rest -> the raw column never holds the plaintext.
+    assert lead.intake["contact_email"] != "jane@example.com"
+    assert decrypt_intake_pii(lead.intake)["contact_email"] == "jane@example.com"
 
 
 async def test_invalid_email_returns_422(

@@ -23,9 +23,17 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from cryptography.fernet import Fernet
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# Must happen before any `verdantis.config.settings` import (transitively,
+# db/session.py and db/redis.py call get_settings() at module-import time) —
+# PII encryption is mandatory, not optional, so every test that touches
+# inbound ingestion needs a real key present from the start, not patched in
+# ad hoc per test.
+os.environ.setdefault("PII_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +45,10 @@ TEST_DATABASE_URL_SYNC = TEST_DATABASE_URL.replace("+asyncpg", "+psycopg2")
 
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 
-_TABLES = "tenants, companies, trade_signals, verification_results, leads"
+_TABLES = (
+    "tenants, companies, trade_signals, verification_results, leads, "
+    "suppression_entries"
+)
 
 
 def _run_migrations() -> None:
