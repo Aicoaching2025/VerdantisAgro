@@ -273,6 +273,12 @@ class Lead(Base, TenantMixin, TimestampMixin):
     # never interrupts).
     thread_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # LangSmith run id for the score_fit call that scored this lead --
+    # lets the approval decision (approve/reject) feed back as a label on
+    # that trace (core.evals.feedback). Inbound leads never set this (no
+    # human decision point exists in that graph to label with).
+    fit_score_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     routed_to: Mapped[RoutingTarget | None] = mapped_column(
         SAEnum(RoutingTarget, name="routing_target", create_type=False),
         nullable=True,

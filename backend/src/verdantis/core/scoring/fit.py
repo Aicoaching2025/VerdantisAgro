@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 
+from langsmith import traceable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from verdantis.core.llm.client import LLMClient
@@ -37,6 +38,7 @@ class FitScoreParseError(Exception):
     """Raised when the LLM's fit-score response can't be parsed."""
 
 
+@traceable(run_type="chain", name="score_fit")
 async def score_fit(client: LLMClient, dossier: CompanyDossier) -> FitScoreResult:
     raw = await client.complete(
         system=_SYSTEM_PROMPT, user=_build_prompt(dossier), max_tokens=512

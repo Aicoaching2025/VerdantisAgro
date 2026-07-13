@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from verdantis.core.scoring.credibility import compute_credibility_score
 from verdantis.core.verification.activity import assess_trade_activity
 from verdantis.core.verification.base import (
     CorporateExistenceProvider,
@@ -75,7 +77,7 @@ class VerificationEngine:
         if sanctions_outcome.verdict is not Verdict.PASS:
             # Hard gate: don't run the other checks, don't let anything
             # downstream infer a clean bill of health from their absence.
-            return VerificationSummary(
+            summary = VerificationSummary(
                 company_id=company_id,
                 sanctions_verdict=sanctions_outcome.verdict,
                 corporate_verdict=None,
@@ -83,6 +85,8 @@ class VerificationEngine:
                 is_sanctioned=company.is_sanctioned,
                 blocked=True,
             )
+            await self._record_credibility_score(company, summary)
+            return summary
 
         corporate_outcome = await self._corporate_provider.check(
             legal_name=company.legal_name, country=company.country
@@ -117,7 +121,7 @@ class VerificationEngine:
             evidence=activity_outcome.evidence,
         )
 
-        return VerificationSummary(
+        summary = VerificationSummary(
             company_id=company_id,
             sanctions_verdict=sanctions_outcome.verdict,
             corporate_verdict=corporate_outcome.verdict,
@@ -125,3 +129,15 @@ class VerificationEngine:
             is_sanctioned=company.is_sanctioned,
             blocked=False,
         )
+        await self._record_credibility_score(company, summary)
+        return summary
+
+    async def _record_credibility_score(
+        self, company: Company, summary: VerificationSummary
+    ) -> None:
+        # Denormalized rollup of already-provenanced verdicts (see
+        # core.scoring.credibility) -- not a new signal, so no separate
+        # provenance write.
+        company.credibility_score = compute_credibility_score(summary)
+        company.credibility_computed_at = datetime.now(UTC)
+        await self._session.flush()

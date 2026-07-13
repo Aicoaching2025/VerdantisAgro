@@ -12,15 +12,20 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
+import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import verdantis.agents.outbound.nodes as nodes_module
+import verdantis.core.evals.feedback as feedback_module
 from verdantis.agents.outbound.graph import build_outbound_graph
 from verdantis.agents.outbound.services import OutboundServices
 from verdantis.agents.outbound.state import OutboundState
+from verdantis.config.settings import Settings
 from verdantis.core.adapters.base import TradeDataAdapter, TradeSignalRecord
 from verdantis.core.crm.hubspot import HubSpotSyncResult
 from verdantis.core.verification.base import (
@@ -236,6 +241,9 @@ async def test_approval_gate_pauses_with_correct_payload_then_resumes_approved(
     )
     assert leads[0].status is LeadStatus.PENDING_APPROVAL
     assert crm.upsert_company_calls == []  # must not sync before approval
+    # LangSmith tracing is off in tests -> no run id generated, and
+    # record_decision_node's feedback call below is a no-op, not an error.
+    assert leads[0].fit_score_run_id is None
 
     final = await app.ainvoke(Command(resume={"action": "approve"}), config=config)
 
@@ -278,3 +286,45 @@ async def test_approval_gate_resumes_rejected_without_crm_sync(
         .all()
     )
     assert leads[0].status is LeadStatus.REJECTED
+
+
+async def test_approval_decision_feeds_back_to_langsmith_when_tracing_enabled(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With tracing on, score_fit_node must mint a run id and persist it on
+    the lead, and record_decision_node must submit it as eval feedback --
+    the actual "approve/reject decisions feed back as labels" loop CLAUDE.md
+    asks for. LangSmith's Client is mocked; nothing here reaches the network."""
+    tracing_settings = Settings(langsmith_tracing=True, langsmith_api_key="test-key")
+    monkeypatch.setattr(nodes_module, "get_settings", lambda: tracing_settings)
+    monkeypatch.setattr(feedback_module, "get_settings", lambda: tracing_settings)
+    fake_langsmith_client = MagicMock()
+    monkeypatch.setattr(feedback_module, "Client", lambda **_: fake_langsmith_client)
+
+    tenant = await _make_tenant(db_session)
+    services = _build_services(
+        db_session, sanctions_verdict=Verdict.PASS, fit_score=0.9, crm_client=None
+    )
+    app = build_outbound_graph().compile(checkpointer=InMemorySaver())
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id, "services": services}}
+
+    await app.ainvoke(
+        OutboundState(tenant_id=tenant.id, commodities=["cocoa"], fit_threshold=0.6),
+        config=config,
+    )
+
+    leads = (
+        (await db_session.execute(select(Lead).where(Lead.tenant_id == tenant.id)))
+        .scalars()
+        .all()
+    )
+    run_id = leads[0].fit_score_run_id
+    assert run_id is not None
+    fake_langsmith_client.create_feedback.assert_not_called()  # not yet decided
+
+    await app.ainvoke(Command(resume={"action": "approve"}), config=config)
+
+    fake_langsmith_client.create_feedback.assert_called_once_with(
+        run_id, key="human_decision", score=1.0, value="approve"
+    )

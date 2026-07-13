@@ -47,6 +47,10 @@ class OutboundState(BaseModel):
     current_blocked: bool = False
     current_fit_score: float | None = None
     current_fit_reasons: list[str] = Field(default_factory=list)
+    # LangSmith run id for the score_fit call, if tracing is enabled -- lets
+    # record_decision_node feed the human's decision back as a label
+    # (core.evals.feedback). None when tracing is off; never real without it.
+    current_fit_score_run_id: str | None = None
     current_decision_maker_email: str | None = None
     current_draft_body: str | None = None
     current_approval_decision: ApprovalDecision | None = None

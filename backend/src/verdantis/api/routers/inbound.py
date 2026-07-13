@@ -144,4 +144,7 @@ async def _run_inbound_graph(state: InboundState, tenant_config: TenantConfig) -
         logger.exception(
             "inbound graph background run failed for lead %s", state.lead_id
         )
-        sentry_sdk.capture_exception()
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("capability", "inbound")
+            scope.set_tag("tenant_id", str(state.tenant_id))
+            sentry_sdk.capture_exception()

@@ -142,7 +142,11 @@ async def _run_outbound_graph(
                 await app.ainvoke(state, config=config)
     except Exception:
         logger.exception("outbound graph run failed for thread %s", thread_id)
-        sentry_sdk.capture_exception()
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("capability", "outbound")
+            scope.set_tag("tenant_id", str(state.tenant_id))
+            scope.set_tag("thread_id", thread_id)
+            sentry_sdk.capture_exception()
 
 
 @router.get("/approvals", response_model=list[ApprovalItem])
@@ -252,4 +256,8 @@ async def _resume_outbound_graph(
                 await app.ainvoke(Command(resume={"action": action}), config=config)
     except Exception:
         logger.exception("outbound graph resume failed for thread %s", thread_id)
-        sentry_sdk.capture_exception()
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("capability", "outbound")
+            scope.set_tag("tenant_id", str(tenant_id))
+            scope.set_tag("thread_id", thread_id)
+            sentry_sdk.capture_exception()
