@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+from langsmith import traceable
+
 from verdantis.core.llm.client import LLMClient
 from verdantis.core.scoring.fit import (
     FitScoreParseError,
@@ -38,6 +40,7 @@ _SYSTEM_PROMPT = (
 )
 
 
+@traceable(run_type="chain", name="score_lead")
 async def score_lead(
     client: LLMClient,
     dossier: CompanyDossier,

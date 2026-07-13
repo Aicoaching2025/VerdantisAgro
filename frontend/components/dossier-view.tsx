@@ -66,6 +66,14 @@ export function DossierView({ leadId }: { leadId: string }) {
             label="Fit score"
             value={lead.fit_score != null ? lead.fit_score.toFixed(2) : null}
           />
+          <Field
+            label="Credibility score"
+            value={
+              dossier?.credibility_score != null
+                ? dossier.credibility_score.toFixed(2)
+                : null
+            }
+          />
           <Field label="Routed to" value={lead.routed_to} />
           <Field label="Incoterm" value={incoterm} />
           <Field label="Payment terms" value={payment_terms} />

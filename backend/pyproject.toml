@@ -20,6 +20,7 @@ dependencies = [
     "tenacity>=9.0",
     "langgraph>=0.2",
     "langgraph-checkpoint-postgres>=2.0",
+    "langsmith>=0.10",
     "psycopg[binary,pool]>=3.1",
     "anthropic>=0.40",
     "pyjwt[crypto]>=2.9",

@@ -21,6 +21,7 @@ from verdantis.agents.inbound.services import InboundServices
 from verdantis.config.settings import get_settings
 from verdantis.core.adapters.resilience import AdapterResilience
 from verdantis.core.crm.hubspot import HubSpotClient, HubSpotNotConfiguredError
+from verdantis.core.llm.cache import LLMResponseCache
 from verdantis.core.llm.client import AnthropicClient
 from verdantis.core.notify.email import EmailNotConfiguredError, ResendEmailClient
 from verdantis.core.notify.slack import SlackNotConfiguredError, SlackWebhookNotifier
@@ -55,6 +56,7 @@ def build_inbound_services(
         api_key=settings.anthropic_api_key,
         model=settings.anthropic_scoring_model,
         resilience=AdapterResilience(redis, provider="anthropic-scoring"),
+        cache=LLMResponseCache(redis),
     )
 
     crm_client = None

@@ -92,6 +92,8 @@ async def test_sanctions_fail_blocks_downstream_checks(
 
     await db_session.refresh(company)
     assert company.is_sanctioned is True
+    assert company.credibility_score == 0.0
+    assert company.credibility_computed_at is not None
 
 
 async def test_sanctions_pass_runs_all_checks(db_session: AsyncSession) -> None:
@@ -128,3 +130,8 @@ async def test_sanctions_pass_runs_all_checks(db_session: AsyncSession) -> None:
         CheckType.CORPORATE_EXISTENCE,
         CheckType.TRADE_ACTIVITY,
     }
+
+    await db_session.refresh(company)
+    # corporate PASS (1.0) + activity FAIL (0.0), averaged.
+    assert company.credibility_score == 0.5
+    assert company.credibility_computed_at is not None

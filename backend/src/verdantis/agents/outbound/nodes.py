@@ -28,7 +28,9 @@ from verdantis.agents.shared.entity_resolution import (
     normalize_match_key,
     resolve_or_create_company,
 )
+from verdantis.config.settings import get_settings
 from verdantis.core.dossier.service import get_dossier
+from verdantis.core.evals.feedback import record_approval_feedback
 from verdantis.core.outreach.draft import draft_outreach
 from verdantis.core.scoring.fit import FitScoreParseError, score_fit
 from verdantis.db.enums import LeadSource, LeadStatus
@@ -91,6 +93,7 @@ _RESET_CURRENT_FIELDS: dict[str, Any] = {
     "current_blocked": False,
     "current_fit_score": None,
     "current_fit_reasons": [],
+    "current_fit_score_run_id": None,
     "current_decision_maker_email": None,
     "current_draft_body": None,
     "current_approval_decision": None,
@@ -147,15 +150,30 @@ async def score_fit_node(
     dossier = await get_dossier(
         services.session, tenant_id=state.tenant_id, company_id=state.current_company_id
     )
+    # Pre-assigned so it's known even though score_fit's own @traceable run
+    # hasn't returned yet -- lets record_decision_node label this exact
+    # trace with the human's approve/reject decision later. Only worth
+    # generating when tracing is actually on; otherwise nothing will exist
+    # on the LangSmith side to attach feedback to.
+    run_id = uuid.uuid4() if get_settings().langsmith_tracing else None
     try:
-        result = await score_fit(services.scoring_client, dossier)
+        result = await score_fit(
+            services.scoring_client,
+            dossier,
+            langsmith_extra={"run_id": run_id} if run_id else {},
+        )
     except FitScoreParseError:
         # Can't score reliably -> treat as no-fit rather than guess a score.
         return {
             "current_fit_score": 0.0,
             "current_fit_reasons": ["fit score unparseable; treated as no-fit"],
+            "current_fit_score_run_id": str(run_id) if run_id else None,
         }
-    return {"current_fit_score": result.score, "current_fit_reasons": result.reasons}
+    return {
+        "current_fit_score": result.score,
+        "current_fit_reasons": result.reasons,
+        "current_fit_score_run_id": str(run_id) if run_id else None,
+    }
 
 
 async def resolve_decision_maker_node(
@@ -190,6 +208,7 @@ async def draft_outreach_node(
         if lead is not None:
             lead.status = LeadStatus.PENDING_APPROVAL
             lead.fit_score = state.current_fit_score
+            lead.fit_score_run_id = state.current_fit_score_run_id
             await services.session.commit()
     return {"current_draft_body": draft.body}
 
@@ -236,11 +255,13 @@ async def record_decision_node(
     services = get_services(config)
     assert state.current_lead_id is not None
     outcome: Outcome
-    if state.current_approval_decision == "approved":
+    approved = state.current_approval_decision == "approved"
+    if approved:
         status, outcome = LeadStatus.APPROVED, "approved"
     else:
         status, outcome = LeadStatus.REJECTED, "rejected"
     await _set_lead_status(services.session, state.current_lead_id, status)
+    record_approval_feedback(state.current_fit_score_run_id, approved=approved)
     return _finish_company(state, outcome)
 
 
