@@ -23,6 +23,7 @@ class LeadSummary(BaseModel):
 
     id: uuid.UUID
     company_id: uuid.UUID | None
+    company_legal_name: str | None
     source: LeadSource
     status: LeadStatus
     fit_score: float | None

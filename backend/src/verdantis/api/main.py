@@ -11,10 +11,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from verdantis.api.deps import get_current_user
 from verdantis.api.routers import admin, health, inbound, leads, outbound, suppression
+from verdantis.config.settings import get_settings
 from verdantis.observability import configure_observability, set_correlation_id
 
 
@@ -40,6 +42,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="Verdantis Buy-Side Lead-Gen API", lifespan=lifespan)
     app.add_middleware(CorrelationIdMiddleware)
+    # Outermost (added last -> runs first), so CORS preflight is answered
+    # before auth/correlation logic sees the request.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().cors_allow_origin_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health.router)
     # Public, unauthenticated — the embeddable form's backend (rate-limited
     # instead; see api/rate_limit.py).

@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from verdantis.api.deps import get_db
 from verdantis.api.schemas.leads import (
@@ -43,6 +44,20 @@ async def _get_tenant(session: AsyncSession, tenant_slug: str) -> Tenant:
     return tenant
 
 
+def _to_summary(lead: Lead) -> LeadSummary:
+    return LeadSummary(
+        id=lead.id,
+        company_id=lead.company_id,
+        company_legal_name=lead.company.legal_name if lead.company else None,
+        source=lead.source,
+        status=lead.status,
+        fit_score=lead.fit_score,
+        routed_to=lead.routed_to,
+        requested_commodity=lead.requested_commodity,
+        created_at=lead.created_at,
+    )
+
+
 @router.get("", response_model=LeadListResponse)
 async def list_leads(
     tenant_slug: str,
@@ -68,6 +83,7 @@ async def list_leads(
             await session.execute(
                 select(Lead)
                 .where(*filters)
+                .options(selectinload(Lead.company))
                 .order_by(Lead.created_at.desc())
                 .limit(limit)
                 .offset(offset)
@@ -77,9 +93,7 @@ async def list_leads(
         .all()
     )
 
-    return LeadListResponse(
-        items=[LeadSummary.model_validate(lead) for lead in rows], total=total
-    )
+    return LeadListResponse(items=[_to_summary(lead) for lead in rows], total=total)
 
 
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
@@ -89,7 +103,7 @@ async def get_lead(
     session: AsyncSession = Depends(get_db),
 ) -> LeadDetailResponse:
     tenant = await _get_tenant(session, tenant_slug)
-    lead = await session.get(Lead, lead_id)
+    lead = await session.get(Lead, lead_id, options=[selectinload(Lead.company)])
     if lead is None or lead.tenant_id != tenant.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="lead not found"
@@ -115,7 +129,7 @@ async def get_lead(
             ) from exc
 
     return LeadDetailResponse(
-        lead=LeadSummary.model_validate(lead),
+        lead=_to_summary(lead),
         incoterm=lead.incoterm,
         payment_terms=lead.payment_terms,
         intake=intake,

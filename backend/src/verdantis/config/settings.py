@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     clerk_jwks_url: str | None = None
     clerk_issuer: str | None = None
 
+    # Comma-separated allow-list for the dashboard frontend's origin(s), read
+    # via cors_allow_origin_list below. The dashboard and API are served from
+    # different origins (Vercel vs. LangGraph Platform / API host), so the
+    # browser needs an explicit CORS grant for Clerk-authenticated fetches.
+    cors_allow_origins: str = "http://localhost:3000"
+
     # OpenSanctions self-hosted (yente) or hosted match API. Unset in dev —
     # the sanctions provider raises a clear error if called without one
     # rather than silently no-op'ing past a compliance-critical check.
@@ -72,6 +78,14 @@ class Settings(BaseSettings):
     # and store it in Doppler, never in code. Unset here on purpose: encrypting
     # PII without a real configured key must fail loudly, not silently no-op.
     pii_encryption_key: str | None = None
+
+    @property
+    def cors_allow_origin_list(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_allow_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def sync_database_url(self) -> str:

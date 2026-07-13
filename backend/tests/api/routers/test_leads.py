@@ -157,6 +157,7 @@ async def test_get_lead_includes_dossier(
     assert response.status_code == 200
     body = response.json()
     assert body["lead"]["id"] == str(lead.id)
+    assert body["lead"]["company_legal_name"] == "Acme Trading Ltd"
     assert body["intake"]["contact_email"] == "jane@example.com"
     assert body["intake"]["contact_name"] == "Jane Buyer"
     assert body["dossier"]["legal_name"] == "Acme Trading Ltd"
