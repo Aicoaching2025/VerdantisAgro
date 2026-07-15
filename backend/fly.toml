@@ -1,0 +1,57 @@
+# Fly.io app config for the Verdantis backend (FastAPI + the LangGraph
+# agents, which run in-process inside this app -- see
+# docs/testing-and-deployment.md §3.3 for why there's no separate
+# LangGraph Platform deployment).
+#
+# Before first deploy:
+#   1. Change `app` below to a globally-unique name, then `fly apps create <name>`
+#      (or just run `fly launch --no-deploy` from backend/ and let it rewrite this).
+#   2. Change `primary_region` if IAD (US East) isn't the right region for you.
+#   3. Provision Postgres + Redis and set every secret in §3.2/§3.3 of
+#      docs/testing-and-deployment.md via `fly secrets set` before the first
+#      `fly deploy` -- the app will not boot without DATABASE_URL/REDIS_URL,
+#      and every dashboard route will 401 without the Clerk secrets.
+
+app = "verdantisagro-api"  # CHANGE ME
+primary_region = "iad"     # CHANGE ME if needed
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Runs once, using the new image, against the *current* running version's
+  # traffic -- must exit 0 before Fly cuts over. This is the migration step:
+  # schema changes land before any request can hit code that expects them.
+  release_command = "alembic upgrade head"
+
+[env]
+  ENVIRONMENT = "production"
+  # Not a secret -- but must be set to the real deployed frontend origin(s)
+  # (e.g. "https://verdantisagro.vercel.app") before the dashboard can reach
+  # this API at all. Comma-separated if there's more than one (a Vercel
+  # preview-deployment domain, a custom domain, etc). Defaults to
+  # localhost:3000 in code, which is useless here.
+  CORS_ALLOW_ORIGINS = "https://CHANGE-ME.vercel.app"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep at least one machine warm: this is a dashboard API humans interact
+  # with synchronously (approvals, admin config) -- a cold start on every
+  # first request after idle is a worse tradeoff here than the extra cost.
+  # Drop to 0 if cost matters more than latency for your traffic pattern.
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

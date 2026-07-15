@@ -127,7 +127,10 @@ for every external provider.
 CI (`.github/workflows/ci.yml`) runs on every push/PR: backend lint/
 typecheck/test, frontend lint/build. **CI does not deploy anything** — no
 Docker push, no Vercel deploy hook, no LangGraph Platform push. Deployment
-today is a manual process you'd need to wire up.
+today is a manual `fly deploy` / Vercel-on-push process (§3.3/§3.4), not a
+CD pipeline — adding a GitHub Actions job that runs `fly deploy` on merge to
+`main` is a reasonable next step once the manual path has been run
+successfully at least once.
 
 ### 3.2 Secrets
 
@@ -152,35 +155,91 @@ never committed, `.env*` is gitignored. The full list (see
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` (frontend) | Frontend Clerk SDK | Sign-in fails |
 | `NEXT_PUBLIC_API_URL` | Frontend → backend base URL | Frontend can't reach the API |
 
-### 3.3 Backend deploy
+### 3.3 Backend deploy (Fly.io)
 
 CLAUDE.md's stated target is **LangGraph Platform** for the agents. That is
 **not how the code is structured today** — worth being direct about, since
-it's a real architectural decision to make before shipping:
+it's a real architectural decision, not something this Fly setup papers
+over:
 
 The outbound/inbound graphs are compiled and invoked *inside* the FastAPI
 process (`build_outbound_graph().compile(...)` runs directly in
 `api/routers/outbound.py`'s background tasks), sharing the same DB session
 and Postgres checkpointer as the API. There is no `langgraph.json` in the
 repo and nothing deploys the graphs as a separate LangGraph Platform
-service. Practically, this means:
+service. **That's fine for a first deploy** — it's one simpler deployable
+unit — but worth revisiting before this needs to scale past one process. If
+you do want the LangGraph Platform split later, that's a real refactor:
+separating the graphs into their own deployable unit, having the API call
+them via the LangGraph Platform client instead of compiling them in-process,
+and deciding how the API and the platform-hosted graphs share the
+checkpointer/DB.
 
-- **As-is, deploy it like any FastAPI app**: build `backend/Dockerfile`,
-  run it (Fly.io, Render, ECS, a VM behind a load balancer — whatever you'd
-  use for a stateless-ish Python API), point it at a managed Postgres with
-  the `vector` extension and a managed Redis. `docker-compose.yml` gives you
-  the local shape of what production needs (Postgres + Redis); it isn't
-  itself a production deploy config.
-- **If you want the LangGraph Platform / LangSmith Deployment split
-  CLAUDE.md describes**, that's a real refactor: separating the graphs into
-  their own deployable unit with a `langgraph.json`, having the API call
-  them via the LangGraph Platform client instead of compiling them
-  in-process, and deciding how the API and the platform-hosted graphs share
-  the checkpointer/DB. Worth doing before this needs to scale past one
-  process, not necessarily before a first production deploy.
-- Either way: run `alembic upgrade head` as a release step, before the new
-  app version takes traffic — migrations are the schema source of truth,
-  there's no auto-create.
+What's actually in the repo now, all under Fly.io, no third-party DB/cache
+vendor required:
+
+| App | Config | Image |
+|---|---|---|
+| API (FastAPI + both graphs) | `backend/fly.toml` | Built from `backend/Dockerfile` |
+| Postgres | `infra/fly/postgres/fly.toml` | Built from `infra/fly/postgres/Dockerfile` (`pgvector/pgvector:pg16` + the `vector` extension created on first boot) |
+| Redis | `infra/fly/redis/fly.toml` | `redis:7-alpine` |
+
+All three apps should live in the same Fly org so they can reach each other
+over Fly's private network (`.flycast` / 6PN) — the DB and Redis are never
+exposed publicly, only the API app has a public HTTPS endpoint.
+
+**One-time setup, in order:**
+
+```bash
+# 1. Postgres
+cd infra/fly/postgres
+fly apps create verdantisagro-db                 # pick your own unique name
+fly volumes create verdantisagro_db_data --region iad --size 10 -a verdantisagro-db
+fly secrets set POSTGRES_PASSWORD="$(openssl rand -hex 24)" -a verdantisagro-db
+fly deploy -a verdantisagro-db
+
+# 2. Redis
+cd ../redis
+fly apps create verdantisagro-redis
+fly volumes create verdantisagro_redis_data --region iad --size 1 -a verdantisagro-redis
+fly deploy -a verdantisagro-redis
+
+# 3. API — from backend/, after editing fly.toml's `app`/`primary_region`
+#    and CORS_ALLOW_ORIGINS to match what you used above and your Vercel URL
+cd ../../../backend
+fly apps create verdantisagro-api
+fly secrets set \
+  DATABASE_URL="postgresql+asyncpg://postgres:<the POSTGRES_PASSWORD above>@verdantisagro-db.flycast:5432/verdantis" \
+  REDIS_URL="redis://verdantisagro-redis.flycast:6379/0" \
+  CLERK_SECRET_KEY="..." \
+  CLERK_PUBLISHABLE_KEY="..." \
+  CLERK_JWKS_URL="..." \
+  CLERK_ISSUER="..." \
+  PII_ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  OPENSANCTIONS_API_KEY="..." \
+  OPENCORPORATES_API_KEY="..." \
+  ANTHROPIC_API_KEY="..." \
+  -a verdantisagro-api
+fly deploy -a verdantisagro-api
+```
+
+`fly deploy` runs `[deploy].release_command` (`alembic upgrade head`, wired
+in `backend/fly.toml`) against the new image *before* cutting traffic over —
+schema changes land before any request can hit code that expects them, and
+a failed migration fails the deploy instead of shipping a broken release.
+
+Optional secrets (§3.2 lists what happens if each is skipped):
+`HUBSPOT_ACCESS_TOKEN`, `RESEND_API_KEY`, `LANGSMITH_API_KEY` +
+`LANGSMITH_TRACING=true`, `SENTRY_DSN`.
+
+**Every subsequent deploy** is just `fly deploy -a verdantisagro-api` from
+`backend/` — the release command re-runs the migration automatically, so a
+PR that adds a new Alembic revision doesn't need a separate manual step.
+
+Verify it worked: `fly status -a verdantisagro-api` should show the machine
+healthy against the `/healthz` check wired in `fly.toml`; `curl
+https://verdantisagro-api.fly.dev/healthz` should return
+`{"status":"ok"}`.
 
 ### 3.4 Frontend deploy
 
@@ -198,20 +257,23 @@ needed for the default App Router setup:
 
 ### 3.5 Rollout order
 
-1. Provision Postgres (with `vector` extension) + Redis in the target
-   environment.
-2. Inject secrets via Doppler into both the backend and frontend deploy
-   targets.
-3. Deploy the backend; run `alembic upgrade head` against the production
-   database as part of that release.
-4. Deploy the frontend, pointed at the backend's real URL.
-5. Set `CORS_ALLOW_ORIGINS` on the backend to the frontend's real origin.
-6. Create the real Clerk application, set its JWKS URL/issuer, and confirm
-   `auth.protect()` actually redirects/verifies against it (this has only
-   been tested against the fail-closed unconfigured path so far — see §4).
-7. Smoke-test end to end: sign in, view an empty Lead Inbox, submit the
-   inbound form, confirm sanctions screening and the approval gate both
-   behave as documented in `docs/human-in-the-loop.md`.
+1. Deploy Postgres and Redis on Fly (§3.3, steps 1–2).
+2. Create the real Clerk application; get its secret/publishable keys and
+   JWKS URL/issuer.
+3. Deploy the API on Fly with every secret set (§3.3, step 3) — the release
+   command applies migrations before traffic cuts over.
+4. Verify `/healthz` (§3.3's last paragraph) before moving on.
+5. Deploy the frontend to Vercel, pointed at the Fly API's real URL
+   (`NEXT_PUBLIC_API_URL`).
+6. Set `CORS_ALLOW_ORIGINS` on the Fly API app to the Vercel deployment's
+   real origin (`fly secrets set CORS_ALLOW_ORIGINS=https://... -a
+   verdantisagro-api && fly deploy -a verdantisagro-api` — it's in
+   `[env]` in `fly.toml` by default, but a secret takes precedence and is
+   the cleaner way to change it post-deploy without editing the file).
+7. Smoke-test end to end: sign in through the real Clerk flow, view an
+   empty Lead Inbox, submit the inbound form, confirm sanctions screening
+   and the approval gate both behave as documented in
+   `docs/human-in-the-loop.md`.
 
 ## 4. Known gaps / next steps, roughly in priority order
 
@@ -223,9 +285,10 @@ needed for the default App Router setup:
    approve/reject eval-feedback loop are verified against the SDK's own
    contract and a mocked client, not a real LangSmith project. Low risk if
    wrong (it's observability, fails soft) but worth a real check.
-3. **CORS allow-list defaults to localhost only** — must be set for the
-   real frontend origin(s) before the dashboard will work in any deployed
-   environment (see §3.2/§3.4).
+3. **CORS allow-list defaults to localhost only** — `backend/fly.toml` has
+   a placeholder that must be changed to the real Vercel origin before the
+   dashboard will work in any deployed environment (see §3.3 step 3 and
+   §3.5 step 6).
 4. **No real trade-data provider adapter.** Outbound discovery only
    ingests a manually uploaded CSV export today. Getting real ongoing
    discovery running means building a second adapter against a licensed

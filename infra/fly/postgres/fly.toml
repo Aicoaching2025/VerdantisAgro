@@ -1,0 +1,38 @@
+# Postgres for Verdantis, deployed as a plain Fly app built from the same
+# pgvector/pgvector:pg16 base image dev/CI already use (docker-compose.yml,
+# .github/workflows/ci.yml), via the tiny Dockerfile in this directory that
+# creates the `vector` extension on first boot (init.sql). Zero risk of
+# Fly's managed Postgres flavor lacking pgvector or running a different
+# major version than what's actually tested. Not HA, no automatic failover:
+# fine for this app's scale; revisit if that changes.
+#
+# Setup (from this directory):
+#   fly apps create verdantisagro-db          # CHANGE ME to match app below
+#   fly volumes create verdantisagro_db_data --region iad --size 10 -a verdantisagro-db
+#   fly secrets set POSTGRES_PASSWORD=<generate one> -a verdantisagro-db
+#   fly deploy -a verdantisagro-db
+#
+# The backend's DATABASE_URL secret then points at this app's internal Fly
+# address: postgresql+asyncpg://postgres:<password>@verdantisagro-db.flycast:5432/verdantis
+# (Fly apps on the same org reach each other over .flycast / 6PN privately --
+# this DB is never exposed publicly).
+
+app = "verdantisagro-db"  # CHANGE ME (must match the app you `fly apps create`)
+primary_region = "iad"    # CHANGE ME -- match the API app's region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  POSTGRES_USER = "postgres"
+  POSTGRES_DB = "verdantis"
+  PGDATA = "/data/pgdata"
+  # POSTGRES_PASSWORD is a secret -- set via `fly secrets set`, never here.
+
+[[mounts]]
+  source = "verdantisagro_db_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

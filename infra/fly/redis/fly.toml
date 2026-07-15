@@ -1,0 +1,31 @@
+# Redis for Verdantis, deployed as a plain Fly app running the exact same
+# image dev/CI already use (docker-compose.yml, .github/workflows/ci.yml) --
+# redis:7-alpine. Used for AdapterResilience state (rate limits, circuit
+# breakers), the LLM response cache, and public-endpoint rate limiting --
+# none of it needs to survive a restart, so the volume here is a nice-to-have
+# (warm cache across deploys), not a correctness requirement.
+#
+# Setup (from this directory):
+#   fly apps create verdantisagro-redis          # CHANGE ME to match app below
+#   fly volumes create verdantisagro_redis_data --region iad --size 1 -a verdantisagro-redis
+#   fly deploy -a verdantisagro-redis
+#
+# The backend's REDIS_URL secret then points at this app's internal Fly
+# address: redis://verdantisagro-redis.flycast:6379/0 (private, never
+# exposed publicly -- there's no AUTH password set here since 6PN traffic
+# never leaves Fly's private network; add `requirepass` + a secret if that
+# assumption ever changes).
+
+app = "verdantisagro-redis"  # CHANGE ME (must match the app you `fly apps create`)
+primary_region = "iad"       # CHANGE ME -- match the API app's region
+
+[build]
+  image = "redis:7-alpine"
+
+[[mounts]]
+  source = "verdantisagro_redis_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
